@@ -1,0 +1,36 @@
+services:
+  rag-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: course-rag-system
+    ports:
+      - "8000:8000"
+    volumes:
+      # Persist ChromaDB data
+      - chroma_data:/app/chroma_db
+      # Mount .env file for API key
+      - ./.env:/app/.env:ro
+      # Development: Mount source code for hot reload (uncomment for dev)
+      # - ./backend:/app/backend
+      # - ./frontend:/app/frontend
+    environment:
+      - PYTHONPATH=/app
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/courses"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - rag-network
+
+volumes:
+  chroma_data:
+    driver: local
+
+networks:
+  rag-network:
+    driver: bridge

@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# Documentation and diagrams
+README.md
+query-flow-diagram.md
+*.md
+
+# Development scripts
+get-docker.sh
+run.sh
+
+# ChromaDB data (will be created in container)
+chroma_db/
+
+# Logs
+*.log
+
+# Docker files (don't copy into container)
+Dockerfile
+.dockerignore
+docker-compose*.yml
