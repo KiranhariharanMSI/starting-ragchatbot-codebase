@@ -25,9 +25,15 @@ document.addEventListener('DOMContentLoaded', () => {
 function setupEventListeners() {
     // Chat functionality
     sendButton.addEventListener('click', sendMessage);
-    chatInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') sendMessage();
+    chatInput.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            sendMessage();
+        }
     });
+    
+    // Auto-resize textarea
+    chatInput.addEventListener('input', autoResizeTextarea);
     
     
     // Suggested questions
@@ -40,6 +46,11 @@ function setupEventListeners() {
     });
 }
 
+// Auto-resize textarea
+function autoResizeTextarea() {
+    chatInput.style.height = 'auto';
+    chatInput.style.height = Math.min(chatInput.scrollHeight, 120) + 'px';
+}
 
 // Chat Functions
 async function sendMessage() {
