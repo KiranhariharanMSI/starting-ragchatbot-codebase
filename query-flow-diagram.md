@@ -7,8 +7,12 @@ sequenceDiagram
     participant API as FastAPI<br/>(app.py)
     participant RAG as RAG System<br/>(rag_system.py)
     participant SM as Session Manager
-    participant AI as AI Generator<br/>(ai_generator.py)
-    participant Claude as Anthropic Claude
+    participant AI as AI Generator + Router<br/>(ai_generator.py)
+    participant Router as Provider Router
+    participant OpenAI as OpenAI (AISuite)
+    participant Gemini as Google Gemini (AISuite)
+    participant Grok as xAI Grok (AISuite)
+    participant Claude as Anthropic (SDK)
     participant TM as Tool Manager<br/>(search_tools.py)
     participant VS as Vector Store<br/>(vector_store.py)
     participant DB as ChromaDB
@@ -40,12 +44,24 @@ sequenceDiagram
     RAG->>+AI: generate_response(query, history, tools, tool_manager)
     AI->>AI: Build system prompt + context
     
-    %% Claude API Call
-    AI->>+Claude: messages.create()<br/>{prompt, tools, context}
-    Claude->>Claude: Analyze query
+    %% Provider Selection & Call
+    AI->>Router: choose(OpenAI→Anthropic→Google→xAI)
+    alt OpenAI available
+        Router->>+OpenAI: chat.completions.create()<br/>{messages}
+        OpenAI-->>AI: Direct response (no tools)
+    else Anthropic available
+        Router->>+Claude: messages.create()<br/>{prompt, tools, context}
+        Claude->>Claude: Analyze query
+    else Google available
+        Router->>+Gemini: chat.completions.create()<br/>{messages}
+        Gemini-->>AI: Direct response (no tools)
+    else xAI available
+        Router->>+Grok: chat.completions.create()<br/>{messages}
+        Grok-->>AI: Direct response (no tools)
+    end
     
     %% Tool Decision & Execution
-    alt Claude decides to search
+    alt Anthropic decides to search
         Claude-->>AI: tool_use request<br/>search_courses(query="...")
         AI->>+TM: execute_tool("search_courses", params)
         TM->>+VS: search(query, course_name, lesson_number)
@@ -56,12 +72,12 @@ sequenceDiagram
         TM->>TM: Track sources for frontend
         TM-->>-AI: "**Result 1** Course: Title...\n**Result 2**..."
         
-        %% Final Response Generation
+        %% Final Response Generation (Anthropic)
         AI->>+Claude: Final call with tool results
         Claude->>Claude: Synthesize answer using retrieved content
         Claude-->>-AI: Generated response text
-    else Claude answers directly
-        Claude-->>-AI: Direct response (no tools needed)
+    else Model answers directly
+        AI-->>AI: Direct response (no tools)
     end
     
     %% Response Assembly
@@ -105,7 +121,7 @@ graph TB
     %% RAG Core
     subgraph RAG ["🧠 RAG Core System"]
         RAGSys[rag_system.py<br/>Main Orchestrator]
-        AIGen[ai_generator.py<br/>Claude Integration]
+        AIGen[ai_generator.py<br/>Multi-LLM Integration + Router]
         SessionMgr[session_manager.py<br/>Conversation History]
     end
 
@@ -125,7 +141,10 @@ graph TB
 
     %% External Services
     subgraph External ["☁️ External Services"]
-        Claude[Anthropic Claude<br/>claude-sonnet-4]
+        OpenAIExt[OpenAI via AISuite]
+        Claude[Anthropic (SDK)]
+        GoogleExt[Google Gemini via AISuite]
+        XAIExt[xAI Grok via AISuite]
         Embeddings[SentenceTransformers<br/>all-MiniLM-L6-v2]
     end
 
@@ -136,7 +155,11 @@ graph TB
     RAGSys --> AIGen
     RAGSys --> SessionMgr
     RAGSys --> ToolMgr
+    AIGen --> OpenAIExt
     AIGen --> Claude
+    AIGen --> GoogleExt
+    AIGen --> XAIExt
+
     ToolMgr --> SearchTool
     SearchTool --> VectorStore
     VectorStore --> ChromaDB
@@ -157,7 +180,7 @@ graph TB
     class RAGSys,AIGen,SessionMgr rag
     class ToolMgr,SearchTool tools
     class VectorStore,DocProcessor,ChromaDB,Docs data
-    class Claude,Embeddings external
+    class OpenAIExt,Claude,GoogleExt,XAIExt,Embeddings external
 ```
 
 ## Data Flow Summary
@@ -168,26 +191,34 @@ flowchart LR
     B --> C[📡 HTTP POST]
     C --> D[🔌 FastAPI Endpoint]
     D --> E[🧠 RAG System]
-    E --> F[🤖 Claude AI + Tools]
-    F --> G[🔍 Vector Search]
-    G --> H[📊 ChromaDB]
-    H --> I[📋 Search Results]
-    I --> J[✨ AI Response]
-    J --> K[📤 JSON Response]
-    K --> L[🎨 UI Update]
-    L --> M[👁️ User Sees Answer]
+    E --> F[🔀 Provider Router]
+    F --> G{Provider}
+    G -->|OpenAI (AISuite)| H1[🧠 OpenAI Response]
+    G -->|Anthropic (SDK)| H2[🧠 Anthropic + Tools]
+    G -->|Google (AISuite)| H3[🧠 Gemini Response]
+    G -->|xAI (AISuite)| H4[🧠 Grok Response]
+    H2 --> I[🔍 Vector Search]
+    I --> J[📊 ChromaDB]
+    J --> K[📋 Search Results]
+    H1 --> L[✨ AI Response]
+    H2 --> L
+    H3 --> L
+    H4 --> L
+    L --> M[📤 JSON Response]
+    M --> N[🎨 UI Update]
+    N --> O[👁️ User Sees Answer]
 
     style A fill:#ffeb3b
-    style M fill:#4caf50
+    style O fill:#4caf50
     style F fill:#2196f3
-    style G fill:#ff9800
-    style H fill:#9c27b0
+    style I fill:#ff9800
+    style J fill:#9c27b0
 ```
 
 ## Key Decision Points
 
 1. **Session Creation**: New vs existing conversation
-2. **Claude Tool Decision**: Search needed vs direct answer
+2. **Tool Decision (Anthropic only)**: Search needed vs direct answer
 3. **Vector Search**: Course filtering vs general search  
 4. **Response Format**: Markdown rendering + source attribution
 5. **Error Handling**: Graceful fallbacks at each layer

@@ -5,22 +5,6 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Development Commands
 
 ### Starting the Application
-
-#### Docker (Recommended for Production)
-```bash
-# Build and start container
-docker-compose up -d
-
-# Check container status
-docker-compose ps
-
-# View logs
-docker logs -f course-rag-system
-
-# Stop container
-docker-compose down
-```
-
 #### Local Development
 ```bash
 # Quick start
@@ -42,14 +26,24 @@ uv add <package-name>
 ```
 
 ### Environment Setup
-Create `.env` file in root with:
+Create `.env` file in root with any available keys (router picks first available):
 ```
-ANTHROPIC_API_KEY=your_anthropic_api_key_here
+# Preferred order: OpenAI → Anthropic → Google → xAI
+OPENAI_API_KEY=...
+ANTHROPIC_API_KEY=...
+GOOGLE_API_KEY=...
+XAI_API_KEY=...
+
+# Optional model overrides
+OPENAI_MODEL=gpt-4o
+ANTHROPIC_MODEL=claude-sonnet-4-20250514
+GEMINI_MODEL=gemini-1.5-pro-002
+GROK_MODEL=grok-2-latest
 ```
 
 ## Architecture Overview
 
-This is a Retrieval-Augmented Generation (RAG) system that answers questions about course materials using semantic search and AI responses.
+This is a **multi-LLM Retrieval-Augmented Generation (RAG) system** with unified function calling support across all providers. It answers questions about course materials using semantic search and AI responses with consistent tool-based document retrieval.
 
 ### Core Components
 
@@ -61,19 +55,23 @@ This is a Retrieval-Augmented Generation (RAG) system that answers questions abo
 
 **RAG System** (`backend/rag_system.py`):
 - Main orchestrator coordinating all components
-- Tool-based architecture where Claude decides when to search
+- **Multi-provider tool integration** with automatic format conversion
 - Session management for conversation context
 - Document processing and vector storage integration
 
 **AI Integration** (`backend/ai_generator.py`):
-- Anthropic Claude integration with tool calling
-- Uses `claude-sonnet-4-20250514` model
-- Implements conversation history and tool execution
+- **Unified multi-LLM support with function calling**:
+  - OpenAI via AISuite (with OpenAI function calling)
+  - Anthropic via Anthropic SDK (with native tool use)
+  - Google Gemini via AISuite (with OpenAI-compatible function calling)
+  - xAI Grok via AISuite (with OpenAI-compatible function calling)
+- **All providers now support tool execution** for RAG functionality
 
 **Vector Search** (`backend/vector_store.py` + `backend/search_tools.py`):
 - ChromaDB for semantic document search
 - Course-aware filtering (search within specific courses)
-- Tool-based search that Claude can invoke dynamically
+- **Unified tool interface** with provider-specific format conversion
+- Tool-based search that all LLMs can invoke dynamically
 
 **Document Processing** (`backend/document_processor.py`):
 - Chunks documents (800 chars, 100 overlap)
@@ -82,17 +80,18 @@ This is a Retrieval-Augmented Generation (RAG) system that answers questions abo
 
 ### Key Architecture Decisions
 
-1. **Tool-Based RAG**: Claude decides when to search rather than always searching
-2. **Session Management**: Tracks conversation history (configurable, default 2 messages)
-3. **Course-Aware Search**: Can filter searches by course name or lesson number
-4. **ChromaDB Persistence**: Vector database stored in `./backend/chroma_db/`
+1. **Provider Router**: OpenAI → Anthropic → Google → xAI based on API key presence
+2. **Tool-Based RAG**: Tool calls supported on Anthropic path today
+3. **Session Management**: Tracks conversation history (configurable, default 2 messages)
+4. **Course-Aware Search**: Can filter searches by course name or lesson number
+5. **ChromaDB Persistence**: Vector database stored in `./chroma_db` (see `backend/config.py`)
 
 ### Data Flow
 1. User query → Frontend → FastAPI endpoint
 2. RAG System creates/retrieves session
-3. AI Generator calls Claude with query + tool definitions
-4. Claude optionally uses search tool to find relevant content
-5. Claude generates response using retrieved context
+3. AI Generator selects provider based on keys and calls model
+4. If Anthropic and tool-use requested, executes tools and re-calls model
+5. Model generates response (with retrieved context when tools used)
 6. Response + sources returned to frontend
 
 ### Configuration
@@ -101,6 +100,7 @@ All settings in `backend/config.py`:
 - Max search results: 5
 - Max conversation history: 2 messages
 - Embedding model: `all-MiniLM-L6-v2`
+- LLM models and API keys for OpenAI, Anthropic, Google Gemini, xAI Grok
 
 ### File Structure
 - `backend/`: All Python backend code
@@ -115,4 +115,3 @@ All settings in `backend/config.py`:
 - Frontend served as static files from FastAPI
 - ChromaDB creates persistent vector store on first run
 - Documents in `docs/` folder are automatically indexed on server startup
-- use the docker route to run and test this

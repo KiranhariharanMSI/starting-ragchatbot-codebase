@@ -121,6 +121,70 @@ header h1 {
     position: relative;
 }
 
+/* Subtle top gradient accent */
+.sidebar::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 6px;
+    background: linear-gradient(90deg, rgba(139,92,246,0.25), rgba(236,72,153,0.2));
+}
+
+/* Brand block */
+.sidebar-brand {
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-md);
+    padding-bottom: var(--spacing-lg);
+    margin-bottom: var(--spacing-lg);
+    border-bottom: 1px dashed var(--border-light);
+}
+
+.brand-icon {
+    color: var(--primary-color);
+    background: rgba(139,92,246,0.08);
+    border: 1px solid var(--border-light);
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.brand-text {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.1;
+}
+
+.brand-title {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.brand-sub {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+/* Decorative SVG at bottom */
+.sidebar-illustration {
+    position: sticky;
+    bottom: 0;
+    margin-top: var(--spacing-xl);
+    padding-top: var(--spacing-lg);
+}
+
+.sidebar-illustration svg {
+    width: 100%;
+    height: auto;
+    display: block;
+}
+
 /* Minimal Scrollbar for Sidebar */
 .sidebar::-webkit-scrollbar {
     width: 4px;

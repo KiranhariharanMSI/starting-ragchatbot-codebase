@@ -1,11 +1,12 @@
 from typing import List, Tuple, Optional, Dict
 import os
-from document_processor import DocumentProcessor
-from vector_store import VectorStore
-from ai_generator import AIGenerator
-from session_manager import SessionManager
-from search_tools import ToolManager, CourseSearchTool
-from models import Course, Lesson, CourseChunk
+import logging
+from .document_processor import DocumentProcessor
+from .vector_store import VectorStore
+from .ai_generator import AIGenerator
+from .session_manager import SessionManager
+from .search_tools import ToolManager, CourseSearchTool
+from .models import Course, Lesson, CourseChunk
 
 class RAGSystem:
     """Main orchestrator for the Retrieval-Augmented Generation system"""
@@ -16,7 +17,7 @@ class RAGSystem:
         # Initialize core components
         self.document_processor = DocumentProcessor(config.CHUNK_SIZE, config.CHUNK_OVERLAP)
         self.vector_store = VectorStore(config.CHROMA_PATH, config.EMBEDDING_MODEL, config.MAX_RESULTS)
-        self.ai_generator = AIGenerator(config.ANTHROPIC_API_KEY, config.ANTHROPIC_MODEL)
+        self.ai_generator = AIGenerator(config)
         self.session_manager = SessionManager(config.MAX_HISTORY)
         
         # Initialize search tools
@@ -119,12 +120,38 @@ class RAGSystem:
             history = self.session_manager.get_conversation_history(session_id)
         
         # Generate response using AI with tools
-        response = self.ai_generator.generate_response(
-            query=prompt,
-            conversation_history=history,
-            tools=self.tool_manager.get_tool_definitions(),
-            tool_manager=self.tool_manager
-        )
+        logger = logging.getLogger(__name__)
+        try:
+            # Get provider-specific tool definitions
+            provider_mode = self.ai_generator.provider_mode
+            # Map provider mode to tool format
+            if provider_mode == "aisuite":
+                # AISuite uses OpenAI-compatible format
+                if "openai:" in self.ai_generator.model:
+                    provider = "openai"
+                elif "google:" in self.ai_generator.model:
+                    provider = "google"
+                elif "xai:" in self.ai_generator.model:
+                    provider = "xai"
+                else:
+                    provider = "openai"  # Default to OpenAI format
+            else:
+                provider = provider_mode
+            
+            tools = self.tool_manager.get_tool_definitions(provider)
+            
+            response = self.ai_generator.generate_response(
+                query=prompt,
+                conversation_history=history,
+                tools=tools,
+                tool_manager=self.tool_manager
+            )
+            # Log a short preview to help diagnose issues
+            preview = response[:200] + ("..." if len(response) > 200 else "") if isinstance(response, str) else "<non-string>"
+            logger.debug("AI response generated. preview=%s", preview)
+        except Exception:
+            logger.exception("AI generation failed for prompt: %s", prompt)
+            raise
         
         # Get sources from the search tool
         sources = self.tool_manager.get_last_sources()

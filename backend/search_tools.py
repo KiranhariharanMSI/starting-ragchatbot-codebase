@@ -1,15 +1,37 @@
 from typing import Dict, Any, Optional, Protocol
 from abc import ABC, abstractmethod
-from vector_store import VectorStore, SearchResults
+from .vector_store import VectorStore, SearchResults
 
 
 class Tool(ABC):
-    """Abstract base class for all tools"""
+    """Abstract base class for all tools with unified multi-LLM support"""
     
     @abstractmethod
     def get_tool_definition(self) -> Dict[str, Any]:
         """Return Anthropic tool definition for this tool"""
         pass
+    
+    def get_openai_tool_definition(self) -> Dict[str, Any]:
+        """Return OpenAI function calling definition for this tool"""
+        anthropic_def = self.get_tool_definition()
+        return {
+            "type": "function",
+            "function": {
+                "name": anthropic_def["name"],
+                "description": anthropic_def["description"],
+                "parameters": anthropic_def["input_schema"]
+            }
+        }
+    
+    def get_tool_definition_for_provider(self, provider: str) -> Dict[str, Any]:
+        """Get tool definition formatted for specific LLM provider"""
+        if provider in ["openai", "google", "xai"]:
+            return self.get_openai_tool_definition()
+        elif provider == "anthropic":
+            return self.get_tool_definition()
+        else:
+            # Default to OpenAI format for compatibility
+            return self.get_openai_tool_definition()
     
     @abstractmethod
     def execute(self, **kwargs) -> str:
@@ -128,9 +150,9 @@ class ToolManager:
         self.tools[tool_name] = tool
 
     
-    def get_tool_definitions(self) -> list:
-        """Get all tool definitions for Anthropic tool calling"""
-        return [tool.get_tool_definition() for tool in self.tools.values()]
+    def get_tool_definitions(self, provider: str = "anthropic") -> list:
+        """Get all tool definitions formatted for specific LLM provider"""
+        return [tool.get_tool_definition_for_provider(provider) for tool in self.tools.values()]
     
     def execute_tool(self, tool_name: str, **kwargs) -> str:
         """Execute a tool by name with given parameters"""

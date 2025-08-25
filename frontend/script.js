@@ -82,7 +82,33 @@ async function sendMessage() {
             })
         });
 
-        if (!response.ok) throw new Error('Query failed');
+        // Special handling for insufficient credits
+        if (response.status === 402) {
+            let detail = 'LLM calls are failing due to insufficient credits. Please top up and try again.';
+            try {
+                const err = await response.json();
+                if (err && err.detail) detail = err.detail;
+            } catch (_) {}
+            // Replace loading message with user-friendly notice
+            loadingMessage.remove();
+            addMessage(`⚠️ ${detail}`, 'assistant');
+            return;
+        }
+
+        if (!response.ok) {
+            // Try to surface backend error detail directly without 'Error:' prefix
+            let detail = 'Query failed';
+            try {
+                const err = await response.json();
+                if (err && err.detail) detail = err.detail;
+            } catch (_) {
+                try { detail = await response.text(); } catch (_) {}
+            }
+            // Replace loading message with the server-provided detail and stop
+            loadingMessage.remove();
+            addMessage(detail, 'assistant');
+            return;
+        }
 
         const data = await response.json();
         
@@ -96,9 +122,10 @@ async function sendMessage() {
         addMessage(data.answer, 'assistant', data.sources);
 
     } catch (error) {
-        // Replace loading message with error
+        // Replace loading message with network/unexpected error (no 'Error:' prefix)
         loadingMessage.remove();
-        addMessage(`Error: ${error.message}`, 'assistant');
+        const msg = (error && error.message) ? error.message : String(error);
+        addMessage(msg, 'assistant');
     } finally {
         chatInput.disabled = false;
         sendButton.disabled = false;
