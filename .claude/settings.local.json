@@ -3,7 +3,11 @@
     "allow": [
       "Bash(docker-compose up:*)",
       "Bash(docker-compose build:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(uv sync:*)",
+      "Bash(uv run:*)",
+      "Bash(grep:*)",
+      "Bash(playwright launch:*)"
     ],
     "deny": [],
     "ask": []

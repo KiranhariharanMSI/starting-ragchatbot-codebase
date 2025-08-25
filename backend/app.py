@@ -1,16 +1,21 @@
 import warnings
 warnings.filterwarnings("ignore", message="resource_tracker: There appear to be.*")
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import List, Optional
 import os
 import logging
 import re
 import anthropic
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from fastapi.responses import Response
+from datetime import datetime, timezone
 
 # Create a module logger
 logger = logging.getLogger(__name__)
@@ -27,33 +32,72 @@ if not logging.getLogger().handlers:
 from .config import config
 from .rag_system import RAGSystem
 
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address)
+
 # Initialize FastAPI app
 app = FastAPI(title="Course Materials RAG System", root_path="")
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# Add trusted host middleware for proxy
+# Add trusted host middleware with specific allowed hosts
 app.add_middleware(
     TrustedHostMiddleware,
-    allowed_hosts=["*"]
+    allowed_hosts=config.ALLOWED_HOSTS
 )
 
-# Enable CORS with proper settings for proxy
+# Enable CORS with restricted origins for security
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=config.ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "Authorization"],
     expose_headers=["*"],
 )
+
+# Security headers middleware
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Add security headers to all responses"""
+    response = await call_next(request)
+    
+    # Security headers
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data:; "
+        "connect-src 'self'"
+    )
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    
+    return response
 
 # Initialize RAG system
 rag_system = RAGSystem(config)
 
 # Pydantic models for request/response
 class QueryRequest(BaseModel):
-    """Request model for course queries"""
-    query: str
-    session_id: Optional[str] = None
+    """Request model for course queries with validation"""
+    query: str = Field(
+        ..., 
+        min_length=1, 
+        max_length=config.MAX_QUERY_LENGTH,
+        description="User query for course content",
+        example="What is the main topic of lesson 1?"
+    )
+    session_id: Optional[str] = Field(
+        None,
+        max_length=100,
+        pattern=r"^[a-zA-Z0-9_-]+$",
+        description="Optional session ID for conversation context"
+    )
 
 class QueryResponse(BaseModel):
     """Response model for course queries"""
@@ -69,16 +113,17 @@ class CourseStats(BaseModel):
 # API Endpoints
 
 @app.post("/api/query", response_model=QueryResponse)
-async def query_documents(request: QueryRequest):
+@limiter.limit(config.RATE_LIMIT_WINDOW)
+async def query_documents(request: Request, query_req: QueryRequest):
     """Process a query and return response with sources"""
     try:
         # Create session if not provided
-        session_id = request.session_id
+        session_id = query_req.session_id
         if not session_id:
             session_id = rag_system.session_manager.create_session()
         
         # Process query using RAG system
-        answer, sources = rag_system.query(request.query, session_id)
+        answer, sources = rag_system.query(query_req.query, session_id)
         
         return QueryResponse(
             answer=answer,
@@ -86,46 +131,33 @@ async def query_documents(request: QueryRequest):
             session_id=session_id
         )
     except anthropic.APIStatusError as e:
-        # Return unified message
-        err_msg = None
-        try:
-            # Prefer structured response if present
-            resp = getattr(e, "response", None)
-            if isinstance(resp, dict):
-                err = resp.get("error", {})
-                err_msg = err.get("message")
-        except Exception:
-            pass
-        if not err_msg:
-            # Try to extract `'message': '...'` or "message": "..." from string form
-            s = str(e)
-            m = re.search(r"'message'\s*:\s*'([^']+)'", s)
-            if not m:
-                m = re.search(r'"message"\s*:\s*"([^"]+)"', s)
-            if m:
-                err_msg = m.group(1)
-        logger.exception("Anthropic API error on /api/query. session_id=%s, query=%s", session_id, request.query)
-        detail_text = err_msg or str(e) or "Unknown error"
-        raise HTTPException(status_code=502, detail=f"call to LLM failed. Message is \"{detail_text}\"")
+        # Log detailed error for debugging but return generic message
+        logger.error("Anthropic API error on /api/query. session_id=%s, status_code=%s", 
+                    session_id, getattr(e, 'status_code', 'unknown'))
+        
+        # Return generic error message to prevent information disclosure
+        if hasattr(e, 'status_code') and e.status_code == 429:
+            raise HTTPException(status_code=429, detail="Rate limit exceeded. Please try again later.")
+        elif hasattr(e, 'status_code') and e.status_code == 401:
+            raise HTTPException(status_code=502, detail="Authentication failed with AI service.")
+        else:
+            raise HTTPException(status_code=502, detail="AI service temporarily unavailable.")
+            
     except anthropic.AnthropicError as e:
-        # Broader Anthropic errors – return unified message including only provider's inner error message when available
-        err_msg = None
-        try:
-            # Many Anthropic errors expose a .response with an 'error' object
-            resp = getattr(e, "response", None) or {}
-            err = resp.get("error", {}) if isinstance(resp, dict) else {}
-            err_msg = err.get("message")
-        except Exception:
-            pass
-        # Fallback: try to extract `'message': '...'` from stringified error
-        detail_text = err_msg or str(e) or "Unknown error"
-        raise HTTPException(status_code=502, detail=f"call to LLM failed. Message is \"{detail_text}\"")
+        # Log detailed error for debugging but return generic message
+        logger.error("Anthropic error on /api/query. session_id=%s, error_type=%s", 
+                    session_id, type(e).__name__)
+        raise HTTPException(status_code=502, detail="AI service error occurred.")
+        
     except Exception as e:
-        logger.exception("/api/query failed. session_id=%s, query=%s", session_id, request.query)
-        raise HTTPException(status_code=500, detail=str(e))
+        # Log detailed error for debugging but return generic message
+        logger.error("/api/query failed. session_id=%s, error_type=%s", 
+                    session_id, type(e).__name__)
+        raise HTTPException(status_code=500, detail="Internal server error.")
 
 @app.get("/api/courses", response_model=CourseStats)
-async def get_course_stats():
+@limiter.limit("30/minute")
+async def get_course_stats(request: Request):
     """Get course analytics and statistics"""
     try:
         analytics = rag_system.get_course_analytics()
@@ -134,7 +166,35 @@ async def get_course_stats():
             course_titles=analytics["course_titles"]
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error("/api/courses failed. error_type=%s", type(e).__name__)
+        raise HTTPException(status_code=500, detail="Failed to retrieve course statistics.")
+
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for monitoring"""
+    return {
+        "status": "healthy",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "version": "0.1.0",
+        "services": {
+            "rag_system": "operational",
+            "vector_store": "operational"
+        }
+    }
+
+@app.get("/api/metrics")
+@limiter.limit("10/minute")
+async def get_metrics(request: Request):
+    """Basic metrics endpoint for monitoring"""
+    try:
+        course_count = rag_system.vector_store.get_course_count()
+        return {
+            "total_courses": course_count,
+            "status": "operational"
+        }
+    except Exception as e:
+        logger.error("Metrics endpoint failed. error_type=%s", type(e).__name__)
+        raise HTTPException(status_code=500, detail="Metrics unavailable.")
 
 @app.on_event("startup")
 async def startup_event():

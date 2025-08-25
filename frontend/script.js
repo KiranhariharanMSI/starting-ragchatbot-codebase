@@ -57,10 +57,11 @@ async function sendMessage() {
     const query = chatInput.value.trim();
     if (!query) return;
 
-    // Disable input
+    // Disable input and provide visual feedback
     chatInput.value = '';
     chatInput.disabled = true;
     sendButton.disabled = true;
+    chatInput.placeholder = 'Processing your message...';
 
     // Add user message
     addMessage(query, 'user');
@@ -89,24 +90,61 @@ async function sendMessage() {
                 const err = await response.json();
                 if (err && err.detail) detail = err.detail;
             } catch (_) {}
-            // Replace loading message with user-friendly notice
             loadingMessage.remove();
             addMessage(`⚠️ ${detail}`, 'assistant');
             return;
         }
 
+        // Handle rate limiting
+        if (response.status === 429) {
+            let detail = 'Too many requests. Please wait a moment and try again.';
+            try {
+                const err = await response.json();
+                if (err && err.detail) detail = err.detail;
+            } catch (_) {}
+            loadingMessage.remove();
+            addMessage(`🚦 ${detail}`, 'assistant');
+            return;
+        }
+
+        // Handle authentication/authorization issues
+        if (response.status === 401 || response.status === 403) {
+            let detail = 'Authentication failed. Please check your API credentials.';
+            try {
+                const err = await response.json();
+                if (err && err.detail) detail = err.detail;
+            } catch (_) {}
+            loadingMessage.remove();
+            addMessage(`🔒 ${detail}`, 'assistant');
+            return;
+        }
+
+        // Handle server errors
+        if (response.status >= 500) {
+            let detail = 'Server is temporarily unavailable. Please try again in a moment.';
+            try {
+                const err = await response.json();
+                if (err && err.detail) detail = err.detail;
+            } catch (_) {}
+            loadingMessage.remove();
+            addMessage(`🔧 ${detail}`, 'assistant');
+            return;
+        }
+
         if (!response.ok) {
-            // Try to surface backend error detail directly without 'Error:' prefix
-            let detail = 'Query failed';
+            // Try to surface backend error detail directly
+            let detail = `Request failed with status ${response.status}`;
             try {
                 const err = await response.json();
                 if (err && err.detail) detail = err.detail;
             } catch (_) {
-                try { detail = await response.text(); } catch (_) {}
+                try { 
+                    const text = await response.text(); 
+                    if (text) detail = text;
+                } catch (_) {}
             }
-            // Replace loading message with the server-provided detail and stop
             loadingMessage.remove();
-            addMessage(detail, 'assistant');
+            addMessage(`❌ ${detail}`, 'assistant');
             return;
         }
 
@@ -122,13 +160,27 @@ async function sendMessage() {
         addMessage(data.answer, 'assistant', data.sources);
 
     } catch (error) {
-        // Replace loading message with network/unexpected error (no 'Error:' prefix)
+        // Handle network and other errors
         loadingMessage.remove();
-        const msg = (error && error.message) ? error.message : String(error);
-        addMessage(msg, 'assistant');
+        let errorMessage = 'Connection failed. Please check your internet connection and try again.';
+        
+        // Check for specific error types
+        if (error.name === 'TypeError' && error.message.includes('fetch')) {
+            errorMessage = 'Unable to connect to the server. Please check if the application is running.';
+        } else if (error.name === 'AbortError') {
+            errorMessage = 'Request was cancelled. Please try again.';
+        } else if (error.message.includes('CSP') || error.message.includes('Content Security Policy')) {
+            errorMessage = 'Security policy blocked the request. Please contact support.';
+        } else if (error.message) {
+            errorMessage = error.message;
+        }
+        
+        addMessage(`🌐 ${errorMessage}`, 'assistant');
+        console.error('Chat request failed:', error);
     } finally {
         chatInput.disabled = false;
         sendButton.disabled = false;
+        chatInput.placeholder = 'Type your message here...';
         chatInput.focus();
     }
 }
@@ -195,7 +247,20 @@ async function loadCourseStats() {
     try {
         console.log('Loading course stats...');
         const response = await fetch(`${API_URL}/courses`);
-        if (!response.ok) throw new Error('Failed to load course stats');
+        
+        // Handle rate limiting for course stats
+        if (response.status === 429) {
+            console.warn('Rate limited while loading course stats');
+            if (totalCourses) totalCourses.textContent = '-';
+            if (courseTitles) {
+                courseTitles.innerHTML = '<span class="rate-limited">Rate limited - try refreshing later</span>';
+            }
+            return;
+        }
+        
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}: Failed to load course stats`);
+        }
         
         const data = await response.json();
         console.log('Course data received:', data);
@@ -218,12 +283,18 @@ async function loadCourseStats() {
         
     } catch (error) {
         console.error('Error loading course stats:', error);
-        // Set default values on error
+        // Set user-friendly error messages
         if (totalCourses) {
-            totalCourses.textContent = '0';
+            totalCourses.textContent = '?';
         }
         if (courseTitles) {
-            courseTitles.innerHTML = '<span class="error">Failed to load courses</span>';
+            let errorMsg = 'Failed to load courses';
+            if (error.message.includes('fetch')) {
+                errorMsg = 'Connection failed';
+            } else if (error.message.includes('429')) {
+                errorMsg = 'Too many requests - try refreshing';
+            }
+            courseTitles.innerHTML = `<span class="error">${errorMsg}</span>`;
         }
     }
 }

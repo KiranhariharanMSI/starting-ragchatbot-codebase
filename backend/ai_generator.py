@@ -7,6 +7,12 @@ try:
 except Exception:
     ai = None
 
+def mask_api_key(api_key: str) -> str:
+    """Mask API key for logging purposes"""
+    if not api_key or len(api_key) < 8:
+        return "****"
+    return f"{api_key[:4]}****{api_key[-4:]}"
+
 class AIGenerator:
     """Handles interactions with Anthropic's Claude API for generating responses"""
     
@@ -54,11 +60,13 @@ Remember: SEARCH FIRST, then answer based only on course materials found.
             self.provider_mode = "aisuite"
             self.client = ai.Client()
             self.model = f"openai:{getattr(config, 'OPENAI_MODEL', 'gpt-4o')}"
+            self.logger.info("Using OpenAI provider with key: %s", mask_api_key(openai_key))
         elif anthropic_key:
             # Anthropic SDK path (keeps tool-use)
             self.provider_mode = "anthropic"
             self.client = anthropic.Anthropic(api_key=anthropic_key)
             self.model = getattr(config, 'ANTHROPIC_MODEL', 'claude-sonnet-4-20250514')
+            self.logger.info("Using Anthropic provider with key: %s", mask_api_key(anthropic_key))
         elif google_key:
             # AISuite with Google Gemini
             if ai is None:
@@ -66,6 +74,7 @@ Remember: SEARCH FIRST, then answer based only on course materials found.
             self.provider_mode = "aisuite"
             self.client = ai.Client()
             self.model = f"google:{getattr(config, 'GEMINI_MODEL', 'gemini-1.5-pro-002')}"
+            self.logger.info("Using Google provider with key: %s", mask_api_key(google_key))
         elif xai_key:
             # AISuite with xAI Grok
             if ai is None:
@@ -73,6 +82,7 @@ Remember: SEARCH FIRST, then answer based only on course materials found.
             self.provider_mode = "aisuite"
             self.client = ai.Client()
             self.model = f"xai:{getattr(config, 'GROK_MODEL', 'grok-2-latest')}"
+            self.logger.info("Using xAI provider with key: %s", mask_api_key(xai_key))
         else:
             self.logger.error("No supported LLM API keys found. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, GOOGLE_API_KEY, or XAI_API_KEY.")
             raise ValueError("No supported LLM API keys found.")

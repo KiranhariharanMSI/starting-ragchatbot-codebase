@@ -1,5 +1,6 @@
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import List
 from dotenv import load_dotenv
 
 # Load environment variables from .env file
@@ -40,6 +41,24 @@ class Config:
     
     # Logging settings
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "ERROR")
+    
+    # Security settings
+    ALLOWED_ORIGINS: List[str] = field(default_factory=lambda: [
+        origin.strip() for origin in os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:8000").split(",")
+        if origin.strip()
+    ])
+    ALLOWED_HOSTS: List[str] = field(default_factory=lambda: [
+        host.strip() for host in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
+        if host.strip()
+    ])
+    
+    # Rate limiting settings
+    RATE_LIMIT_REQUESTS: int = int(os.getenv("RATE_LIMIT_REQUESTS", "10"))
+    RATE_LIMIT_WINDOW: str = os.getenv("RATE_LIMIT_WINDOW", "10/minute")
+    
+    # Input validation settings
+    MAX_QUERY_LENGTH: int = int(os.getenv("MAX_QUERY_LENGTH", "1000"))
+    MAX_REQUEST_SIZE: int = int(os.getenv("MAX_REQUEST_SIZE", "1048576"))  # 1MB
 
 config = Config()
 
